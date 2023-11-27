@@ -1,8 +1,8 @@
-from numpy.linalg.linalg import det
-from globals import *
 import math
-logger = Logging().get(__name__, args.loglevel)
 
+from globals import *
+
+logger = Logging().get(__name__, args.loglevel)
 
 
 class CAN_2d(nn.Module):
@@ -17,6 +17,13 @@ class CAN_2d(nn.Module):
         self.conv4_motion = nn.Conv2d(64, 64, (3, 3))
         self.avgpool2_motion = nn.AvgPool2d((2, 2))
         self.dropout2_motion = nn.Dropout(0.25)
+        #
+        # ####
+        # self.conv5_motion = nn.Conv2d(64, 128, (3, 3), padding=1)
+        # self.conv6_motion = nn.Conv2d(128, 128, (3, 3), padding=1)
+        # self.avgpool3_motion = nn.AvgPool2d((2, 2))
+        # self.dropout3_motion = nn.Dropout(0.25)
+        # ###
         if model_type == 'HR':
             self.dense1_motion = nn.Linear(3136, 128)
             self.dropout3_motion = nn.Dropout(0.5)
@@ -31,21 +38,25 @@ class CAN_2d(nn.Module):
 
         self.conv1_appearance = nn.Conv2d(3, 32, (3, 3), padding=1)
         self.conv2_appearance = nn.Conv2d(32, 32, (3, 3))
-        self.conv2_attention = nn.Conv2d(32, 1, (1, 1))   # ***
+        self.conv2_attention = nn.Conv2d(32, 1, (1, 1))  # ***
 
         self.avgpool1_appearance = nn.AvgPool2d((2, 2))
         self.dropout1_appearance = nn.Dropout(0.25)
         self.conv3_appearance = nn.Conv2d(32, 64, (3, 3), padding=1)
         self.conv4_appearance = nn.Conv2d(64, 64, (3, 3))
-        self.conv4_attention = nn.Conv2d(64, 1, (1, 1)) # ***     
+        self.conv4_attention = nn.Conv2d(64, 1, (1, 1))  # ***
 
+        # self.avgpool2_appearance = nn.AvgPool2d((2, 2))
+        # self.dropout2_appearance = nn.Dropout(0.25)
+        # self.conv5_appearance = nn.Conv2d(64, 128, (3, 3), padding=1)
+        # self.conv6_appearance = nn.Conv2d(128, 128, (3, 3))
+        # self.conv6_attention = nn.Conv2d(128, 1, (1, 1))  # ***
 
     def masknorm(self, x):
         xsum = torch.sum(torch.sum(x, axis=2, keepdims=True), axis=3, keepdims=True)
         xshape = x.shape
-        ans = (x/xsum)*xshape[2]*xshape[3]*0.5
+        ans = (x / xsum) * xshape[2] * xshape[3] * 0.5
         return ans
-
 
     def forward(self, xm, xa):
 
@@ -103,9 +114,7 @@ class CAN_2d(nn.Module):
         xm = self.dense2_motion(xm)
         logger.debug(xm.shape)
 
-        
         return xm, xa, debug
-
 
     def preprocess(self, x):
         from dataloader import get_appearance_motion
@@ -134,7 +143,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class  Tnet(nn.Module):
+class Tnet(nn.Module):
     def __init__(self):
         super(Tnet, self).__init__()
         self.batch_size, self.seqlen = args.batch_size, args.seqlen
@@ -143,26 +152,34 @@ class  Tnet(nn.Module):
         self.can2d = CAN_2d()
 
         ###
-        self.dmodel = 32
+        self.dmodel = 32  #64  # 32
         self.feat_win = 4
 
-        self.linear_in = nn.Linear(128 if PHYS_TYPE=='HR' else 32, self.dmodel)
+        self.liner_in_dim = 128
+        self.linear_in = nn.Linear(self.liner_in_dim if PHYS_TYPE == 'HR' else 32, self.dmodel)
         self.cls_token = nn.Embedding(1, self.dmodel)
-        self.pos_encoder = PositionalEncoding(self.dmodel, max_len=args.seqlen+1)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=self.dmodel, nhead=8, activation='gelu')
+        self.pos_encoder = PositionalEncoding(self.dmodel, max_len=args.seqlen + 1)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.dmodel, nhead=8, activation='relu')
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=args.numlayer)
-        
-        
-        self.linear_out = nn.Sequential(
-            nn.Linear(self.dmodel, 1),   
+
+        self.linear_out_wave = nn.Sequential(
+            nn.Linear(self.dmodel, 1),
+        )
+        self.linear_out_max = nn.Sequential(
+            nn.Linear((self.seqlen + 1) * self.dmodel, 1),
+        )
+        self.linear_out_mean = nn.Sequential(
+            nn.Linear((self.seqlen + 1) * self.dmodel, 1),
         )
 
-    
+        # self.y_phys_mean = nn.Parameter(torch.Tensor(1))
+        # self.y_phys_max = nn.Parameter(torch.Tensor(1))
+
     def base_encoder(self, x):
         debug_dict = {}
-        xm, xa = x[..., :3], x[...,  3:]
+        xm, xa = x[..., :3], x[..., 3:]
         xm, xa = [_.reshape(-1, 36, 36, 3).permute(0, 3, 1, 2) for _ in [xm, xa]]
-        canout, _, can_debug = self.can2d(xm, xa)
+        canout, xa, can_debug = self.can2d(xm, xa)
 
         debug_dict['can_xm'] = can_debug['dense1']
         debug_dict['mask1'] = can_debug['mask1']
@@ -170,32 +187,40 @@ class  Tnet(nn.Module):
 
         return debug_dict
 
-
     def forward(self, x, bpsignal):
         dp_debug_dict = {}
 
         dp_debug_dict = self.base_encoder(x)
         x = dp_debug_dict['can_xm']
-        x = self.linear_in(x.reshape(-1, 128 if PHYS_TYPE=='HR' else 32))
+        x = self.linear_in(x.reshape(-1, self.liner_in_dim))  # 128 if PHYS_TYPE == 'HR' else 32))
 
-        x = x.reshape(-1, self.seqlen , self.dmodel)
+        x = x.reshape(-1, self.seqlen, self.dmodel)
         token = self.cls_token.weight.repeat(x.shape[0], 1).unsqueeze(1)
         x = torch.cat([token, x], 1)
-        x = x.permute(1,0,2)
-        assert x.shape[0] == args.seqlen+1
-        
+        x = x.permute(1, 0, 2)
+        assert x.shape[0] == args.seqlen + 1
+
         x = x * np.sqrt(self.dmodel)
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
-        x = x.permute(1,0,2)
+        x = x.permute(1, 0, 2)
 
         dp_debug_dict['encoder'] = x
-        x = self.linear_out(x.reshape(-1, self.dmodel))
-        x = x.reshape(-1, self.seqlen+1)
+
+        x_reshape = x.reshape(-1, self.dmodel)
+        x_reshape_for_metrics = x.reshape(-1, (self.seqlen + 1) * self.dmodel)
+
+        x = self.linear_out_wave(x_reshape)
+        x = x.reshape(-1, self.seqlen + 1)
+
+        phys_mean = x.mean(-1)
+        phys_mean_centered = x - phys_mean[:, None]
+        phys_mean_centered_absolute_max = torch.max(torch.abs(phys_mean_centered), -1)
+        x = phys_mean_centered / phys_mean_centered_absolute_max[0][:, None]
 
         x = x[:, 1:]
         assert x.shape[1] == args.seqlen
 
-        return x, dp_debug_dict
-
-
+        max_bp = self.linear_out_max(x_reshape_for_metrics)
+        mean_bp = self.linear_out_mean(x_reshape_for_metrics)
+        return x, max_bp, mean_bp, dp_debug_dict

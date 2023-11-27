@@ -5,6 +5,8 @@ from os.path import join as osj
 import numpy as np
 from matplotlib import pyplot as plt
 
+from globals import args
+
 split = 'validation'
 assert split in ['training', 'validation', 'testing']
 
@@ -12,10 +14,9 @@ assert split in ['training', 'validation', 'testing']
 def check_data():
     start_chunk = 56
     start_idx = 28
-    cachepath_root = ''
     chunk_idx = start_chunk
 
-    path = osj(cachepath_root, f'cache_{split}', f'batch_{chunk_idx}.npy')
+    path = osj(args.cache_path, f'cache_{split}', f'batch_{chunk_idx}.npy')
     if os.path.exists(path):
         data = np.load(path, allow_pickle=True)
 
