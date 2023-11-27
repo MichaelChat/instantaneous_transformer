@@ -26,12 +26,15 @@ parser.add_argument('--batch_size', type=int, default=32, metavar='N')
 parser.add_argument('--epochs', type=int, default=1000, metavar='N')
 parser.add_argument('--enough_epochs', type=int, default=70, metavar='N')
 parser.add_argument('--start_epoch', type=int, default=0, metavar='N')
-parser.add_argument('--lr', type=float, default=9e-4, metavar='LR')
+parser.add_argument('--lr', type=float, default=9e-3, metavar='LR')
 parser.add_argument('--no-cuda', action='store_true', default=False)
 parser.add_argument('--log-interval', type=int, default=250, metavar='N')
 parser.add_argument('--resume', default='', type=str)
+parser.add_argument('--best_model', default='', type=str)
 parser.add_argument('--name', default='exp_001', type=str)
 parser.add_argument('--datadir', default=f'{root_dir}/data', type=str)
+parser.add_argument('--cache_path', default=f'{root_dir}/data/V4V_cache', type=str)
+parser.add_argument('--cache_mask_path', default=f'{root_dir}/data/V4V_cache/mask', type=str)
 parser.add_argument('--test', dest='test', action='store_true', default=False)
 parser.add_argument('--include_test', dest='include_test', action='store_true', default=False)
 parser.add_argument('--loglevel', default='INFO', type=str)
@@ -43,7 +46,6 @@ parser.add_argument('--valfreq', type=int, default=5, metavar='N')
 parser.add_argument('--phys', type=str, default='HR')
 parser.add_argument('--use_subset', dest='use_subset', action='store_true', default=False)
 parser.add_argument('--subset_size', type=int, default=1, metavar='N')
-
 
 args, _ = parser.parse_known_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -59,7 +61,6 @@ weights_dir = osj(root_dir, 'weights', exp_name)
 if not os.path.exists(weights_dir):
     os.mkdir(weights_dir)
 
-
 PHYS_TYPE = args.phys
 assert PHYS_TYPE in ['HR', 'RR']
 
@@ -68,8 +69,9 @@ HIGH_HR_FREQ = 2.5 if PHYS_TYPE == 'HR' else 22 / 60
 
 print(f'THE PHYS_TYPE IS {PHYS_TYPE}')
 
-det_cpu_npy = lambda x : x.detach().cpu().numpy()
-norm_sig = lambda x: np.reshape((x-x.mean()) / np.max(np.abs(x-x.mean())), -1)
+det_cpu_npy = lambda x: x.detach().cpu().numpy()
+norm_sig = lambda x: np.reshape((x - x.mean()) / np.max(np.abs(x - x.mean())), -1)
+
 
 def tqdm(iterator):
     from tqdm import tqdm
@@ -97,14 +99,13 @@ class Logging:
             logger.setLevel(logging.DEBUG)
             h = logging.FileHandler("logs/debug.log")
             formatter = logging.Formatter(
-                    f'%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s [%(lineno)s]: %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                )
+                f'%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s [%(lineno)s]: %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S',
+            )
             h.setFormatter(formatter)
             h.setLevel(logging.DEBUG)
             logger.addHandler(h)
             logger.propagate = False
-
 
             console_logging = logging.StreamHandler(sys.stdout)
             console_logging.setLevel(logging.INFO)
@@ -113,9 +114,8 @@ class Logging:
 
             self.__logger_dict[name] = logger
             coloredlogs.install(level=level, logger=logger)
-    
-        return self.__logger_dict[name]
 
+        return self.__logger_dict[name]
 
 
 def set_highlighted_excepthook():
@@ -135,4 +135,3 @@ def set_highlighted_excepthook():
 
 
 set_highlighted_excepthook()
-
